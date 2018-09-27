@@ -1,12 +1,14 @@
 #!/usr/bin/env runhaskell
+{-# LANGUAGE ScopedTypeVariables #-}
 -- Adam Selker, 2018-09-24
 -- A program which plays rock-paper-scissors like a human
 
 import System.Random
+import Debug.Trace
 
 -- Data structures
 data Throw = Rock | Paper | Scissors deriving (Eq, Show)
-data Result = Win | Draw | Lose deriving (Eq, Show)
+data Result = Win | Tie | Lose deriving (Eq, Show)
 
 data State = State { -- The "mental state" of the bot
   rng :: StdGen, -- A random-number generator
@@ -20,55 +22,92 @@ stringToMove "p" = Just Paper
 stringToMove "s" = Just Scissors
 stringToMove _ = Nothing
 
-result :: Throw -> Throw -> Result
-result Rock Paper = Lose
-result Paper Scissors = Lose
-result Scissors Rock = Lose
-result x y = if x == y then Draw else Win
+result :: (Throw, Throw) -> Result
+result (Rock, Paper) = Lose
+result (Paper, Scissors) = Lose
+result (Scissors, Rock) = Lose
+result (x, y) = if x == y then Tie else Win
+
+winValue :: Result -> Float
+winValue Win = 1
+winValue Tie = 0
+winValue Lose = -1
+
+winRate :: [Result] -> Float
+winRate [] = 0
+winRate h = (sum $ map winValue h) / (fromIntegral $ length h) 
 
 -- Some functions to perform part of the thinking.  If only I could have those...
 
+-- If no other info, just pick something
+wDefault :: [(Throw, Throw)] -> (Float, Float, Float)
+wDefault _ = (1, 1, 1)
+
 -- Do what's worked in the past
-wPastOutcomes :: State -> (Float, Float, Float)
-wPastOutcomes (State _ history) =
-  let winRate h = (/ length h) $ sum $ map (\x -> (
-                          case x of Win -> 1 -- "Average win rate"
-                                    Tie -> 0
-                                    Loss -> -1)) results in
+wPastOutcomes :: [(Throw, Throw)] -> (Float, Float, Float)
+wPastOutcomes [] = (0, 0, 0)
+wPastOutcomes history =
   -- Find the win rates of different moves
-  let myRockRate = winRate . filter (\(x, _) -> x == Rock) history in
-  let myPaperRate = winRate . filter (\(x, _) -> x == Paper) history in
-  let myScissorsRate = winRate . filter (\(x, _) -> x == Scissors) history in
+  -- let myRockRate = winRate $ result $ filter (\(x, _) -> x == Rock) history in
+  let myRockRate = winRate [result x | x <- history, fst x == Rock] in 
+  let myPaperRate = winRate [result x | x <- history, fst x == Paper] in 
+  let myScissorsRate = winRate [result x | x <- history, fst x == Scissors] in 
   (myRockRate, myPaperRate, myScissorsRate)
   
 -- Try to throw about equal amounts of Rock, Paper, Scissors... with a fudge factor =)
-wEvenThrows :: State -> (Float, Float, Float)
-wEvenThrows (State _ history) =
-  let rocks = length $ filter (\(x, _) -> x == Rock) history in
-  let papers = length $ filter (\(x, _) -> x == Paper) history in
-  let scissorss = length $ filter (\(x, _) -> x == Scissors) history in
-  (-rocks * 0.9, -papers, -scissors) -- Humans tend to throw a lot of rocks.
+wEvenThrows :: [(Throw, Throw)] -> (Float, Float, Float)
+wEvenThrows [] = (0, 0, 0)
+wEvenThrows history =
+  let rocks = fromIntegral $ length $ filter (\(x, _) -> x == Rock) history in
+  let papers = fromIntegral $ length $ filter (\(x, _) -> x == Paper) history in
+  let scissorss = fromIntegral $ length $ filter (\(x, _) -> x == Scissors) history in
+  (-rocks * 0.9, -papers, -scissorss) -- Humans tend to throw a lot of rocks.
+
+-- Helper function for wGamblersFallacy
+gamblersStrength :: [(Throw, Throw)] -> Float
+gamblersStrength [] = 0
+gamblersStrength [(_, _)] = 0
+gamblersStrength ((_, y1):(x2, y2):rest) =
+  if y1 == y2 then 1 + (gamblersStrength ((x2,y2):rest))
+  else 0
 
 -- Humans percieve "runs" where none exist... 
-wGamblersFallacy :: State -> (Float, Float, Float)
-wGamblersFallacy (State rng history) =
-  let weight = 1 in
-  if fst history[0] == snd history[0]
-    then let (r, p, s) = wGamblersFallacy (State rng history) in
-    case fst history[0] of Rock -> (r+weight, p, s)
-                           Paper -> (r, p+weight, s)
-                           Scissors -> (r, p, s+weight)
-    else (0,0,0)
+wGamblersFallacy :: [(Throw, Throw)] -> (Float, Float, Float)
+wGamblersFallacy [] = (0, 0, 0)
+wGamblersFallacy history =
+  let s = gamblersStrength history in
+  case snd (head history) of Rock -> (0, s, 0)
+                             Paper -> (0, 0, s)
+                             Scissors -> (s, 0, 0)
+
+-- Helpers to merge weights and work with tuples
+add3 :: Num a => (a, a, a) -> (a, a, a) -> (a, a, a)
+add3 (a, b, c) (d, e, f) = (a+d, b+e, c+f)
+
+scale3 :: Num a => a -> (a, a, a) -> (a, a, a)
+scale3 x (a, b, c) = (x*a, x*b, x*c)
+
+fst3 :: (a, b, c) -> a
+fst3 (a, _, _) = a
+
+snd3 :: (a, b, c) -> b
+snd3 (_, b, _) = b
+
+mergeWs :: [Float] -> [(Float, Float, Float)] -> (Float, Float, Float)
+mergeWs ss ws =
+  let scaled = zipWith scale3 ss ws in -- Scale each weight triplet by the given values
+  let (ua, ub, uc) = foldl add3 (0, 0, 0) scaled in -- Sum the different sources of weights
+  let m = min ua (min ub uc) in 
+  let (oa, ob, oc) =  (ua - m, ub - m, uc - m) in -- Subtract the lowest, so we start at 0
+  scale3 ( 1/(oa + ob + oc)) (oa, ob, oc) -- Normalize so they sum to 1
 
 -- The main decision function
-chooseMove :: State -> (Throw, State)
+chooseMove :: State -> (Throw, StdGen)
 chooseMove (State rng history) = 
-  let (rn, newRng) = randomR (0::Int,2::Int) rng in
-  let move = case (mod rn 3) of 
-    0 -> Rock
-    1 -> Paper
-    2 -> Scissors in
-  (move, State newRng history)
+  let ws = mergeWs [1, 1, 0.1, 1] ( map (\x -> x history) [wDefault, wPastOutcomes, wEvenThrows, wGamblersFallacy] ) in
+  let (rn :: Float, newRng) = random rng in
+  let move = if (rn < fst3 ws) then Rock else if (rn < fst3 ws + snd3 ws) then Paper else Scissors in
+  (move, newRng)
 
 -- IO wrapper for the decision function
 doMove :: State -> IO ()
@@ -77,9 +116,10 @@ doMove state =
     userIn <-  getLine 
     case stringToMove userIn of
       Nothing -> do
-        putStrLn "invalid input"
+        putStrLn "Please enter r, p, or s.  Use ctrl-D or ctrl-C to exit."
         doMove state
-      Just x -> let (myThrow, newState) = chooseMove state in do
+      Just x -> let (myThrow, newRng) = chooseMove state in 
+        let newState = (\(State rng history) -> State newRng ((myThrow, x):history)) state in do
         putStrLn $ show myThrow
         doMove newState
 
