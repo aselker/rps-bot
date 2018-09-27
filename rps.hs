@@ -76,9 +76,9 @@ wGamblersFallacy :: [(Throw, Throw)] -> (Float, Float, Float)
 wGamblersFallacy [] = (0, 0, 0)
 wGamblersFallacy history =
   let s = gamblersStrength history in
-  case snd (head history) of Rock -> (0, s, 0)
-                             Paper -> (0, 0, s)
-                             Scissors -> (s, 0, 0)
+  case snd (head history) of Rock -> (0, s, -s)
+                             Paper -> (-s, 0, s)
+                             Scissors -> (s, -s, 0)
 
 -- Helpers to merge weights and work with tuples
 add3 :: Num a => (a, a, a) -> (a, a, a) -> (a, a, a)
