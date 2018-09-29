@@ -48,7 +48,6 @@ wPastOutcomes :: [(Throw, Throw)] -> (Float, Float, Float)
 wPastOutcomes [] = (0, 0, 0)
 wPastOutcomes history =
   -- Find the win rates of different moves
-  -- let myRockRate = winRate $ result $ filter (\(x, _) -> x == Rock) history in
   let myRockRate = winRate [result x | x <- history, fst x == Rock] in 
   let myPaperRate = winRate [result x | x <- history, fst x == Paper] in 
   let myScissorsRate = winRate [result x | x <- history, fst x == Scissors] in 
