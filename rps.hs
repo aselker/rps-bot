@@ -4,7 +4,6 @@
 -- A program which plays rock-paper-scissors like a human
 
 import System.Random
-import Debug.Trace
 
 -- Data structures
 data Throw = Rock | Paper | Scissors deriving (Eq, Show)
@@ -16,23 +15,28 @@ data State = State { -- The "mental state" of the bot
   } deriving Show
 
 -- Utility functions
+
+-- Interpret a human's input
 stringToMove :: String -> Maybe Throw
 stringToMove "r" = Just Rock
 stringToMove "p" = Just Paper
 stringToMove "s" = Just Scissors
 stringToMove _ = Nothing
 
+-- Win, lose, or tie?
 result :: (Throw, Throw) -> Result
 result (Rock, Paper) = Lose
 result (Paper, Scissors) = Lose
 result (Scissors, Rock) = Lose
 result (x, y) = if x == y then Tie else Win
 
+-- Win -> 1, tie -> 0, loss -> -1
 winValue :: Result -> Float
 winValue Win = 1
 winValue Tie = 0
 winValue Lose = -1
 
+-- Average winRates
 winRate :: [Result] -> Float
 winRate [] = 0
 winRate h = (sum $ map winValue h) / (fromIntegral $ length h) 
@@ -92,6 +96,7 @@ fst3 (a, _, _) = a
 snd3 :: (a, b, c) -> b
 snd3 (_, b, _) = b
 
+-- Weighted average of weights
 mergeWs :: [Float] -> [(Float, Float, Float)] -> (Float, Float, Float)
 mergeWs ss ws =
   let scaled = zipWith scale3 ss ws in -- Scale each weight triplet by the given values
